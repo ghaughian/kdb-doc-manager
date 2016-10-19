@@ -46,13 +46,13 @@ class KdbTestCase(unittest.TestCase):
 
     def setUp(self):
         # Create test database in KDB+ 
-        self.kdb_conn.sync("`.test.test set ([]id:(); ts:`long$(); ns:(); name:(); title:(); description:(); subject:(); data:(); a:`int$(); b_0_c:`int$(); b_10_c:`int$(); b_0_e:`int$(); b_1_d:`int$(); b_1_f:`int$(); b_2_e:`int$(); billing_address_street:(); billing_address_state:(); numbers_0:(); numbers_1:(); numbers_2:(); characters_0_name:(); characters_0_color:(); characters_1_name:(); characters_1_color:(); characters_2:());")
+        self.kdb_conn.sync("`.test.test set ([]id:(); ts:`long$(); ns:(); name:(); title:(); description:(); subject:(); data:(); a:`int$(); b_0_c:`int$(); b_10_c:`int$(); b_0_e:`int$(); b_1_d:`int$(); b_1_f:`int$(); b_2_e:`int$(); billing_address_street:(); billing_address_state:(); numbers_0:(); numbers_1:(); numbers_2:(); characters_0_name:(); characters_0_color:(); characters_1_name:(); characters_1_color:(); characters_2:(); popularity:`int$());")
 
     def _search(self, query):
         return self.docman._stream_search(query)
 
     def _remove(self):
-        self.kdb_conn.sync("![`.test;();0b;enlist`test];`.test.test set ([]id:(); ts:`long$(); ns:(); name:(); title:(); description:(); subject:(); data:(); a:`int$(); b_0_c:`int$(); b_10_c:`int$(); b_0_e:`int$(); b_1_d:`int$(); b_1_f:`int$(); b_2_e:`int$(); billing_address_street:(); billing_address_state:(); numbers_0:(); numbers_1:(); numbers_2:(); characters_0_name:(); characters_0_color:(); characters_1_name:(); characters_1_color:(); characters_2:());")
+        self.kdb_conn.sync("![`.test;();0b;enlist`test];`.test.test set ([]id:(); ts:`long$(); ns:(); name:(); title:(); description:(); subject:(); data:(); a:`int$(); b_0_c:`int$(); b_10_c:`int$(); b_0_e:`int$(); b_1_d:`int$(); b_1_f:`int$(); b_2_e:`int$(); billing_address_street:(); billing_address_state:(); numbers_0:(); numbers_1:(); numbers_2:(); characters_0_name:(); characters_0_color:(); characters_1_name:(); characters_1_color:(); characters_2:(); popularity:`int$());")
         
 
 class TestKdb(KdbTestCase):
@@ -97,21 +97,24 @@ class TestKdb(KdbTestCase):
         """
 
         self.conn['test']['test'].insert_one({'name': 'paulie'})
-        assert_soon(lambda: sum(1 for _ in self.kdb_conn.sync('?[`.test.test;();0b;()]')) > 0)
-        result_set_1 = list(self.kdb_conn.sync('?[`.test.test;enlist(like;`name;"paulie");0b;()]'))
+        assert_soon(lambda: sum(1 for _ in self.kdb_conn.sync('?[.test.test;();0b;()]')) > 0)
+        result_set_1 = self.kdb_conn.sync('?[.test.test;enlist(~\:;`name;"paulie");0b;()]')
         self.assertEqual(len(result_set_1), 1)
         result_set_2 = self.conn['test']['test'].find_one()
         for item in result_set_1:
-            self.assertEqual(item['_id'], str(result_set_2['_id']))
-            self.assertEqual(item['name'], result_set_2['name'])
+            doc = {} 
+            for k, v in item.items():
+                doc[k] = v
+            self.assertEqual(doc['id'], str(result_set_2['_id']))
+            self.assertEqual(doc['name'], result_set_2['name'])
 
     def test_remove(self):
         """Tests remove
         """
         self.conn['test']['test'].insert_one({'name': 'paulie'})
-        assert_soon(lambda: sum(1 for _ in self.kdb_conn.sync("?[`.test.test;();0b;()]")) == 1)
+        assert_soon(lambda: sum(1 for _ in self.kdb_conn.sync("?[.test.test;();0b;()]")) == 1)
         self.conn['test']['test'].delete_one({'name': 'paulie'})
-        assert_soon(lambda: sum(1 for _ in self.kdb_conn.sync("?[`.test.test;();0b;()]")) == 0)
+        assert_soon(lambda: sum(1 for _ in self.kdb_conn.sync("?[.test.test;();0b;()]")) == 0)
 
     def test_update(self):
         """Test update operations on Kdb.
@@ -123,8 +126,7 @@ class TestKdb(KdbTestCase):
         """
         docman = self.connector.doc_managers[0]
 
-        # Use diabolical value for _id to test string escaping as well.
-        self.conn.test.test.insert_one({"_id": u'+-&え|!(){}[]^"~*?:\\/', "a": 0})
+        self.conn.test.test.insert_one({"a": 0})
         assert_soon(lambda: sum(1 for _ in self._search("()")) == 1)
 
         def check_update(update_spec):
@@ -194,7 +196,7 @@ class TestKdb(KdbTestCase):
         retry_until_ok(self.conn.test.test.insert_one, {'name': 'pauline'})
         assert_soon(lambda: sum(1 for _ in self.kdb_conn.sync('?[`.test.test;();0b;()]')) == 2)
 
-        result_set_1 = list(self.kdb_conn.sync('?[`.test.test;enlist(like;`name;"paulie");0b;()]'))
+        result_set_1 = list(self.kdb_conn.sync('?[`.test.test;enlist(~\:;`name;"pauline");0b;()]'))
         result_set_2 = self.conn['test']['test'].find_one({'name': 'pauline'})
         self.assertEqual(len(result_set_1), 1)
         for item in result_set_1:
@@ -209,9 +211,9 @@ class TestKdb(KdbTestCase):
         self.repl_set.secondary.start()
 
         time.sleep(2)
-        result_set_1 = self.kdb_conn.sync('?[`.test.test;enlist(like;`name;"pauline");0b;()]')
+        result_set_1 = self.kdb_conn.sync('?[`.test.test;enlist(~\:;`name;"pauline");0b;()]')
         self.assertEqual(sum(1 for _ in result_set_1), 0)
-        result_set_2 = self.kdb_conn.sync('?[`.test.test;enlist(like;`name;"paul");0b;()]')
+        result_set_2 = self.kdb_conn.sync('?[`.test.test;enlist(~\:;`name;"paul");0b;()]')
         self.assertEqual(sum(1 for _ in result_set_2), 1)
 
     def test_valid_fields(self):
@@ -228,7 +230,7 @@ class TestKdb(KdbTestCase):
         assert_soon(lambda: sum(1 for _ in self._search("()")) > 0)
         result = docman.get_last_doc()
         self.assertIn('popularity', result)
-        self.assertEqual(sum(1 for _ in self._search("name like \"test_valid\"")), 1)
+        self.assertEqual(sum(1 for _ in self._search("name ~\:\"test_valid\"")), 1)
 
     def test_invalid_fields(self):
         """ Tests documents without field definitions
@@ -246,7 +248,7 @@ class TestKdb(KdbTestCase):
         result = docman.get_last_doc()
         self.assertNotIn('break_this_test', result)
         self.assertEqual(sum(1 for _ in self._search(
-            "name like \"test_invalid\"")), 1)
+            "name ~\:\"test_invalid\"")), 1)
 
     def test_nested_fields(self):
         """Test indexing fields that are sub-documents in MongoDB
@@ -285,16 +287,16 @@ class TestKdb(KdbTestCase):
                     "documents should have been replicated to Kdb")
 
         # Search for first document
-        results = self.kdb_conn.sync("?[`.test.test;enlist(like;`billing_address_street;\"12345 Mariposa Street\");0b;()]")
+        results = self.kdb_conn.sync("?[`.test.test;enlist(~\:;`billing_address_street;\"12345 Mariposa Street\");0b;()]")
         self.assertEqual(len(results), 1)
         self.assertEqual(next(iter(results))["billing_address_state"],
                          "California")
 
         # Search for second document
-        results = self.kdb_conn.sync("?[`.test.test;enlist(like;`characters_1_color;\"red\");0b;()]")
+        results = self.kdb_conn.sync("?[`.test.test;enlist(~\:;`characters_1_color;\"red\");0b;()]")
         self.assertEqual(len(results), 1)
         self.assertEqual(next(iter(results))["numbers.2"], "three")
-        results = self.kdb_conn.sync("?[`.test.test;enlist(like;`characters_2;\"Cookie Monster\");0b;()]")
+        results = self.kdb_conn.sync("?[`.test.test;enlist(~\:;`characters_2;\"Cookie Monster\");0b;()]")
         self.assertEqual(len(results), 1)
 
 if __name__ == '__main__':

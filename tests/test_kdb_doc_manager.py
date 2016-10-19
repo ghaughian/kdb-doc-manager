@@ -93,9 +93,7 @@ class TestKdbDocManager(KdbTestCase):
         Kdb via DocManager
 
         """
-        self.docman.bulk_upsert([], *TESTARGS)
-
-        docs = ({"id": i} for i in range(1000))
+        docs = ({"id": i} for i in range(1, 1001))
         self.docman.bulk_upsert(docs, *TESTARGS)
 
         res = sorted(int(x["id"])
@@ -104,7 +102,7 @@ class TestKdbDocManager(KdbTestCase):
         for i, r in enumerate(res):
             self.assertEqual(r, i)
 
-        docs = ({"id": i, "weight": 2*i} for i in range(1000))
+        docs = ({"id": i, "weight": 2*i} for i in range(1,1001))
         self.docman.bulk_upsert(docs, *TESTARGS)
 
         res = sorted(int(x["weight"])
@@ -123,7 +121,7 @@ class TestKdbDocManager(KdbTestCase):
         self.assertEqual(len(res), 1)
 
         self.docman.remove(docc['id'], *TESTARGS)
-        res = self.kdb_conn.search('()')
+        res = self.kdb_conn.sync('select from .test.test')
         self.assertEqual(len(res), 0)
 
     def test_search(self):
@@ -166,7 +164,7 @@ class TestKdbDocManager(KdbTestCase):
         self.docman.command_helper = CommandHelper()
 
         def count_ns(ns):
-            return sum(1 for _ in self._search("ns:%s" % ns))
+            return sum([self.kdb_conn.sync("count .{}".format(ns))])
 
         self.docman.upsert({'id': '1', 'test': 'data'}, *TESTARGS)
         self.assertEqual(count_ns("test.test"), 1)

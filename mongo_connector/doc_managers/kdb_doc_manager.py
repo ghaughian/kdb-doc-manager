@@ -153,12 +153,9 @@ class DocManager(DocManagerBase):
         # Only include fields that are explicitly provided in the schema 
         field_list = self.field_list[namespace]
         field_conversion = self.field_conversion[namespace]
-        print(field_conversion)
         if len(field_list) > 0:
-            print(dict((u(k).replace('.','_',10), self._convert_types(field_conversion,k,v)) for k, v in flat_doc.items() if k in field_list))
             flat_doc = dict((k.replace('.','_',10), self._convert_types(field_conversion,k,v)) for k, v in flat_doc.items() if k in field_list)
-            print("#### flattened doc looks like ####")
-            print(flat_doc)
+            print("#### flattened doc looks like: {}".format(flat_doc))
             return flat_doc
         return flat_doc
 
@@ -186,9 +183,9 @@ class DocManager(DocManagerBase):
         if doc.get('drop'):
             new_db, coll = self.command_helper.map_collection(db, doc['drop'])
             if new_db:
-                self.q.sync('![`.{0};();0b;enlist {1}]'.format(new_db,coll))
+                self.q.sync('![`.{0};();0b;enlist `{1}]'.format(new_db,coll))
 
-    def apply_update(self, doc, update_spec):
+    def apply_update(self, doc, update_spec, namespace=''):
         """Override DocManagerBase.apply_update to have flat documents."""
         # Replace a whole document
         if not '$set' in update_spec and not '$unset' in update_spec:
@@ -199,16 +196,18 @@ class DocManager(DocManagerBase):
             return update_spec
         for to_set in update_spec.get("$set", []):
             value = update_spec['$set'][to_set]
+            field_list = self.field_list[namespace]
             # Find dotted-path to the value, remove that key from doc, then
             # put value at key:
             keys_to_pop = []
-            for key in doc:
-                if key.startswith(to_set):
-                    if key == to_set or key[len(to_set)] == '.':
-                        keys_to_pop.append(key)
-            for key in keys_to_pop:
-                doc.pop(key)
-            doc[to_set] = value
+            if to_set in field_list:
+                for key in doc:
+                    if key.startswith(to_set):
+                        if key == to_set or key[len(to_set)] == '.':
+                            keys_to_pop.append(key)
+                for key in keys_to_pop:
+                    doc.pop(key)
+                doc[to_set] = value
         for to_unset in update_spec.get("$unset", []):
             # MongoDB < 2.5.2 reports $unset for fields that don't exist within
             # the document being updated.
@@ -226,10 +225,16 @@ class DocManager(DocManagerBase):
         """Apply updates given in update_spec to the document whose id
         matches that of doc.
         """
-        results = self.q.sync('![;();0b;`ns`ts]?[`.{0};enlist(like;`{1};"{2}");0b;()]'.format(namespace, self.unique_key, u(document_id)))
-        # Results is an iterable containing only 1 result
-        for doc in results:
-            updated = self.apply_update(doc, update_spec)
+        # first select the row that matchs and drop the `ns and `ts columns
+        results = self.q.sync('first ![;();0b;`ns`ts]?[`.{0};enlist(~\:;`{1};"{2}");0b;();1]'.format(namespace, self.unique_key, u(document_id)))
+        doc = {}
+        if isinstance(results, QDictionary):
+            for k, v in results.items():
+                doc[k]=v
+        # Results should be a KDB dict containing only 1 result
+        #for row in results:
+            print("######## row to update: {}".format(doc))
+            updated = self.apply_update(doc, update_spec, namespace)
             self.upsert(updated, namespace, timestamp)
             return updated
 
@@ -242,10 +247,6 @@ class DocManager(DocManagerBase):
         always be one mongo document, represented as a Python dictionary.
         """
         doc = self._clean_doc(doc, namespace, timestamp)
-        print('#### in the upsert function ####')
-        print(doc)
-        print(QDictionary(doc.keys(), doc.values()))
-        #self.q.sync('upd', '.{}'.format(namespace), QDictionary(qlist(doc.keys(),qtype=QGENERAL_LIST), qlist([x.encode('utf-8',errors='ignore') for x in doc.values()],qtype=QGENERAL_LIST)))
         self.q.sync('insert', numpy.string_('.{}'.format(namespace)), QDictionary(qlist([numpy.string_(x) for x in doc.keys()],qtype=QSYMBOL_LIST), doc.values()))
 
     @wrap_exceptions
@@ -254,17 +255,18 @@ class DocManager(DocManagerBase):
 
         docs may be any iterable
         """
-        print(d for d in docs)
+        if not docs:
+            print("########## NO DOCS!!!! #########")
+            return
         cleaned = (self._clean_doc(d, namespace, timestamp) for d in docs)
-        print(list(cleaned))
         if self.chunk_size > 0:
             batch = list(next(cleaned) for i in range(self.chunk_size))
             while batch:
                 print('#### in the bulk_upsert_1 function ####')
-                #ib = iter(batch)
-                #data = dict(izip(ib,ib)).items()
                 for rec in batch:
-                    self.q.sync('insert', numpy.string_('.{}'.format(namespace)), QDictionary(qlist(rec.keys(),qtype=QSYMBOL_LIST), qlist([x for x in rec.values()],qtype=QGENERAL_LIST)))
+                    print(rec)
+                    self.q.sync('insert', numpy.string_('.{}'.format(namespace)), QDictionary(qlist([numpy.string_(x) for x in rec.keys()],qtype=QSYMBOL_LIST), rec.values()))
+                    #self.q.sync('insert', numpy.string_('.{}'.format(namespace)), QDictionary(qlist([numpy.string_(x) for x in doc.keys()],qtype=QSYMBOL_LIST), doc.values()))
                     #self.q.sync('insert', '.{}'.format(namespace), QDictionary(qlist(rec.keys(),qtype=QGENERAL_LIST), qlist([x.encode('utf-8') for x in rec.values()],qtype=QGENERAL_LIST)))
                 batch = list(next(cleaned)
                              for i in range(self.chunk_size))
@@ -276,9 +278,7 @@ class DocManager(DocManagerBase):
 
     @wrap_exceptions
     def insert_file(self, f, namespace, timestamp):
-        raise errors.OperationFailed(
-                "kdb_doc_manager does not support replication of "
-                " insert_file")
+        raise errors.OperationFailed("kdb_doc_manager does not support replication of insert_file")
 
     @wrap_exceptions
     def remove(self, document_id, namespace, timestamp):
@@ -286,16 +286,16 @@ class DocManager(DocManagerBase):
 
         The input is a python dictionary that represents a mongo document.
         """
-        self.q.sync('![enlist`.{0};enlist(=;`{1};{2});();`symbol$()]'.format(namespace, self.unique_key, u(document_id)))
+        self.q.sync('![`.{0};enlist(~\:;`{1};\"{2}\");0b;`symbol$()]'.format(namespace, self.unique_key, u(document_id)))
+        return 0
 
     def _ns_and_qry(self, query):
         """Helper method for getting the kdb database name to apply query to.
              e.g. query = "ns:test.nest;a=0"
         """
         ns, qry = query.split('ns:',1)[1].split(';', 1)
-        print(qry)
         if qry is None:
-            qry='()'
+           qry='()'
         return ns.lower(), qry
 
     def _get_tables(self):
@@ -307,19 +307,29 @@ class DocManager(DocManagerBase):
         kdb_query=''
         if query.startswith('ns:'):
             ns, qry = self._ns_and_qry(query)
-            kdb_query = '?[`.{0};enlist parse"{1}";0b;();1000000]'.format(ns, qry)
+            if '()' == qry:
+                kdb_query = '?[`.{0};();0b;();1000000]'.format(ns)
+            else:
+                kdb_query = '?[`.{0};enlist parse"{1}";0b;();1000000]'.format(ns, qry)
         else:
             tabs = self._get_tables()
             if len(tabs) == 1:
-                tab = 'enlist {}'.format(tabs)
+                tab = 'enlist {}'.format(tabs[0])
             else:
                 tab = '({})'.format(";".join(tabs))
-            kdb_query = 'raze ?[;enlist parse"{0}";0b;();1000000] each {1}'.format(query,tab)
+            if '()' == query:
+                kdb_query = 'raze ?[;();0b;();1000000] each {0}'.format(,tab)
+            else:
+                kdb_query = 'raze ?[;enlist parse"{0}";0b;();1000000] each {1}'.format(query,tab)
         
         for doc in self.q.sync(kdb_query):
-            if self.unique_key != "_id":
-                doc["_id"] = doc.pop(self.unique_key)
-            yield doc
+            subdoc = {}
+            if isinstance(doc, QDictionary):
+                for k, v in doc.items():
+                    subdoc[k]=v
+                if self.unique_key != "_id":
+                    subdoc["_id"] = subdoc.pop(self.unique_key)
+                yield subdoc
 
     @wrap_exceptions
     def search(self, start_ts, end_ts):
@@ -339,7 +349,7 @@ class DocManager(DocManagerBase):
         try:
             tabs = self._get_tables()
             if len(tabs) == 1:
-                tab = 'enlist {}'.format(tabs)
+                tab = 'enlist {}'.format(tabs[0])
             else:
                 tab = '({})'.format(";".join(tabs))
             #result = self.q.sync('select max[ts] from raze ?[;enlist(=;`ts;(max;`ts));0b;()] each ({})'.format(";".join(tabs)))
@@ -348,5 +358,9 @@ class DocManager(DocManagerBase):
             return None
 
         for r in result:
-            r['_id'] = r.pop(self.unique_key)
-            return r
+            doc = {}
+            if isinstance(r, QDictionary):
+                for k, v in r.items():
+                    doc[k]=v
+                doc['_id'] = doc.pop(self.unique_key)
+                return doc
